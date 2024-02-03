@@ -12,9 +12,10 @@
     )
 )]
 
-use std::{env, time::Duration};
+use std::{env, net::SocketAddr, time::Duration};
 
 use chrono::Utc;
+use clap::Parser;
 use dotenv::dotenv;
 use palette::{LinSrgb, Mix};
 use poise::{
@@ -25,11 +26,19 @@ use tokio::time;
 use tracing::{debug, error, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::EnvFilter;
 
-struct Data {}
+struct Data {
+    arma_query_addr: SocketAddr,
+}
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
 const ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Parser)]
+struct Args {
+    #[arg(short, long, env = "ARMA_QUERY_ADDR")]
+    arma_query_addr: SocketAddr,
+}
 
 /// Entry point for the bot.
 pub async fn run_bot() {
@@ -42,6 +51,9 @@ pub async fn run_bot() {
                 .from_env_lossy(),
         )
         .init();
+
+    let args = Args::parse();
+    info!(addr = %args.arma_query_addr, "using arma query address");
 
     let token = match env::var("DISCORD_TOKEN") {
         Ok(token) => {
@@ -61,7 +73,7 @@ pub async fn run_bot() {
             commands: vec![register(), info()],
             ..Default::default()
         })
-        .setup(|ctx, _ready, framework| {
+        .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
                 info!("running setup callback");
 
@@ -70,9 +82,11 @@ pub async fn run_bot() {
                     Err(error) => error!(%error, "failed to register commands"),
                 }
 
-                tokio::spawn(activity_loop(ctx.clone()));
+                tokio::spawn(activity_loop(ctx.clone(), args.arma_query_addr));
 
-                Ok(Data {})
+                Ok(Data {
+                    arma_query_addr: args.arma_query_addr,
+                })
             })
         })
         .build();
@@ -85,11 +99,11 @@ pub async fn run_bot() {
     client.unwrap().start().await.unwrap();
 }
 
-async fn activity_loop(ctx: serenity::Context) {
+async fn activity_loop(ctx: serenity::Context, arma_addr: SocketAddr) {
     let a2s_client = a2s::A2SClient::new().await.unwrap();
 
     loop {
-        match a2s_client.info("100.124.122.71:2303").await {
+        match a2s_client.info(arma_addr).await {
             Ok(info) => {
                 let activity = match info.players {
                     1 => ActivityData::playing(format!("Arma 3 with {} player", info.players)),
@@ -125,13 +139,9 @@ async fn register(ctx: Context<'_>) -> Result<(), Error> {
 #[tracing::instrument(name = "info_command", skip_all)]
 async fn info(ctx: Context<'_>) -> Result<(), Error> {
     let client = a2s::A2SClient::new().await.unwrap();
+    let arma_addr = ctx.data().arma_query_addr;
 
-    match tokio::time::timeout(
-        Duration::from_millis(500),
-        client.info("100.124.122.71:2303"),
-    )
-    .await
-    {
+    match tokio::time::timeout(Duration::from_millis(500), client.info(arma_addr)).await {
         Ok(Ok(info)) => {
             debug!(?info, "got info");
 
