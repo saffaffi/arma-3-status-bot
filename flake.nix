@@ -74,7 +74,18 @@
     {
       packages = rec {
         default = arma-3-status-bot;
-        arma-3-status-bot = (rustPkgs.workspace.arma-3-status-bot { }).bin;
+        arma-3-status-bot = ((rustPkgs.workspace.arma-3-status-bot { }).overrideAttrs (old:
+          let
+            inherit (pkgs.lib) optionals;
+            inherit (pkgs.stdenv) isDarwin;
+            inherit (pkgs.darwin) apple_sdk;
+          in
+          {
+            propagatedNativeBuildInputs = with pkgs; [
+            ] ++ (optionals isDarwin (with apple_sdk.frameworks; [
+              SystemConfiguration
+            ]));
+          })).bin;
       };
 
       apps = rec {
