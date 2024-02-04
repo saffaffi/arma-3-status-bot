@@ -116,6 +116,7 @@ async fn activity_loop(ctx: serenity::Context, arma_addr: SocketAddr) {
                 );
             }
             Err(error) => {
+                ctx.set_activity(Some(ActivityData::custom("Arma 3 server is offline")));
                 warn!(
                     %error,
                     next_update = %humantime::Duration::from(ACTIVITY_UPDATE_INTERVAL),
