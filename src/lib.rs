@@ -22,6 +22,7 @@ use poise::{
     serenity_prelude::{self as serenity, ActivityData, Colour, CreateEmbed, CreateEmbedFooter},
     CreateReply, Framework, FrameworkOptions,
 };
+use rand::Rng;
 use tokio::time;
 use tracing::{debug, error, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::EnvFilter;
@@ -38,6 +39,8 @@ const ACTIVITY_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 struct Args {
     #[arg(short, long, env = "ARMA_QUERY_ADDR")]
     arma_query_addr: SocketAddr,
+    #[arg(short, long)]
+    random_zero_messages: bool,
 }
 
 /// Entry point for the bot.
@@ -82,7 +85,11 @@ pub async fn run_bot() {
                     Err(error) => error!(%error, "failed to register commands"),
                 }
 
-                tokio::spawn(activity_loop(ctx.clone(), args.arma_query_addr));
+                tokio::spawn(activity_loop(
+                    ctx.clone(),
+                    args.arma_query_addr,
+                    args.random_zero_messages,
+                ));
 
                 Ok(Data {
                     arma_query_addr: args.arma_query_addr,
@@ -99,21 +106,58 @@ pub async fn run_bot() {
     client.unwrap().start().await.unwrap();
 }
 
-async fn activity_loop(ctx: serenity::Context, arma_addr: SocketAddr) {
+async fn activity_loop(ctx: serenity::Context, arma_addr: SocketAddr, random_zero_messages: bool) {
     let a2s_client = a2s::A2SClient::new().await.unwrap();
+
+    let zero_messages: [ActivityData; 5] = [
+        ActivityData::watching("paint dry"),
+        ActivityData::listening("infantry playing cards"),
+        ActivityData::watching("a pot boil"),
+        ActivityData::competing("a boredom competition"),
+        ActivityData::watching("grass grow"),
+    ];
+    let mut last_players = None;
 
     loop {
         match a2s_client.info(arma_addr).await {
             Ok(info) => {
-                let activity = match info.players {
-                    1 => ActivityData::playing(format!("Arma 3 with {} player", info.players)),
-                    other => ActivityData::playing(format!("Arma 3 with {} players", other)),
-                };
-                ctx.set_activity(Some(activity));
-                info!(
-                    next_update = %humantime::Duration::from(ACTIVITY_UPDATE_INTERVAL),
-                    "updated activity data"
-                );
+                match info.players {
+                    0 if random_zero_messages && last_players != Some(0) => {
+                        let idx = rand::thread_rng().gen_range(0..zero_messages.len());
+                        let act = zero_messages[idx].clone();
+                        ctx.set_activity(Some(act));
+                        info!(
+                            players = %info.players,
+                            next_update = %humantime::Duration::from(ACTIVITY_UPDATE_INTERVAL),
+                            "set activity data to random zero-message"
+                        );
+                    }
+                    1 if last_players != Some(1) => {
+                        let act = ActivityData::playing("Arma 3 with 1 player");
+                        ctx.set_activity(Some(act));
+                        info!(
+                            players = %info.players,
+                            next_update = %humantime::Duration::from(ACTIVITY_UPDATE_INTERVAL),
+                            "updated activity data"
+                        );
+                    }
+                    other if last_players != Some(other) => {
+                        let act = ActivityData::playing(format!("Arma 3 with {} players", other));
+                        ctx.set_activity(Some(act));
+                        info!(
+                            players = %info.players,
+                            next_update = %humantime::Duration::from(ACTIVITY_UPDATE_INTERVAL),
+                            "updated activity data"
+                        );
+                    }
+                    _ => {
+                        info!(
+                            next_update = %humantime::Duration::from(ACTIVITY_UPDATE_INTERVAL),
+                            "number of players has not changed; not updating activity data"
+                        );
+                    }
+                }
+                last_players = Some(info.players);
             }
             Err(error) => {
                 ctx.set_activity(Some(ActivityData::custom("Arma 3 server is offline")));
